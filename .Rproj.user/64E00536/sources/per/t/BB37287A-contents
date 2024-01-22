@@ -1,0 +1,438 @@
+---
+title: "Untitled"
+format: html
+editor: visual
+---
+
+## Outliers handling
+
+```{r}
+log()
+Winsorize()
+IQR()
+orderNorm()
+rm(list=ls())
+```
+
+## Data
+
+```{r}
+source("utils.R")
+library(patchwork)
+set.seed(2)
+original_df <- read.csv("data/Train.csv")
+train_raw <- original_df
+desc <- read.csv("data/VariableDescription.csv")
+
+composite_names <- c(
+  "nursery_factors",
+  "tillage_method",
+  "transplanting_org_fertilizers",
+  "tillage_fertilizers_second_dose",
+  "transplanting_factors",
+  "tillage_basal_fertilizers"
+)
+
+train_raw[train_raw == ""] <- "NotDefined"
+train_raw$ref_date <- as.Date("2022-06-01")
+
+
+names(train_raw )<- c("id","district","block","cut_land","crop_cut_land","tillage_method","tillage_date","tillage_depth",
+               "transplanting_method","nursery_date","transplanting_date","transplanting_seedlings_per_pit","nursery_factors","transplanting_factors",
+               "transplanting_irrigation_hours","transplanting_irrigation_source","transplanting_irrigation_ps","transplanting_irrigation_cost",
+               "total_standing_water","transplanting_org_fertilizers","transplanting_ganaura","transplanting_crop_org_fym","tillage_previous_fert_method","total_fertilizer_applied_times","tillage_basal_fertilizers",
+               "tillage_basal_dap","tillage_basal_urea","tillage_mineral_fert_method","tillage_fertilizers_second_dose","tillage_urea_second_dose","tillage_tat_urea_first","tillage_urea_third_dose","tillage_tat_urea_second",
+               "tillage_mineral_fertilizers_method_second_dose","harvest_method","harvest_date","harvest_hand_rent","threshing_date","threshing_method","harvest_residue_length","harvest_residue_perc","harvest_stubble_use","acre","yield","ref_date")
+
+train_raw <- makeWide_v2(df=train_raw)
+
+train <- train_raw %>%
+  dplyr::select(id,district,block,ref_date,
+                starts_with("tillage"),
+                starts_with("nursery"),
+                starts_with("transplanting"),
+                starts_with("harvest"),
+                starts_with("threshing"),
+                starts_with("total"),
+                acre,yield)
+train <- train %>%
+  mutate(yield_per_acre = yield/acre)
+
+rm(train_raw)
+
+
+
+
+
+
+```
+
+```{r}
+
+set.seed(1)
+#rm(list=ls()[!ls()=="train"])
+vip_split <- initial_split(train, prop = 0.8)
+
+train_data <- training(vip_split)
+test_data <- testing(vip_split)
+
+folds <- vfold_cv(train_data, v = 5)
+
+```
+
+
+## Features
+
+```{r}
+
+base_recipe <- recipe(yield ~ .,
+                      data = train %>% dplyr::select(-yield_per_acre)
+                      ) %>%
+  update_role(id, new_role = "id") %>%
+  step_rm(matches("date|_new")) %>%
+  step_impute_median(all_numeric_predictors()) %>%
+  step_corr(all_numeric_predictors()) %>%
+  step_zv(all_predictors()) %>%
+  step_normalize(all_numeric_predictors())
+  
+  
+dummy_df <- base_recipe %>% prep %>% bake(new_data= train_data)
+
+# x <- orderNorm(dummy_df$yield)
+# dummy_df$yield <- x$x.t
+
+
+lm_model <- lm(yield~.,
+               dummy_df %>%
+                 dplyr::select(-id))
+lm_model <- stepAIC(lm_model, direction='backward')
+
+summary(lm_model)
+
+lm_model$residuals %>% plot()
+
+preds <- predict(lm_model, base_recipe %>% prep %>% bake(new_data= test_data)%>%dplyr::select(-id))
+test_data$yield_predicted <- preds # predict(x,preds,inverse = T)
+
+RMSE(test_data$yield_predicted, test_data$yield)
+
+p2 <- test_data %>%
+  ggplot(aes(yield_predicted, yield))+
+  geom_point()+
+  geom_smooth(method='lm')
+
+p1 <- test_data %>%
+  ggplot(aes(yield_predicted, yield_predicted-yield))+
+  geom_point()
+
+
+(p1|p2)
+
+
+
+test_data %>%
+  dplyr::select(yield, yield_predicted) %>%
+  arrange(desc(yield))
+
+
+
+train %>%
+  ggplot(aes(as.factor(tillage_basal_fertilizers_SSP_new),yield_per_acre,color=as.factor(tillage_method_FourWheelTracRotavator_new),group=as.factor(tillage_method_FourWheelTracRotavator_new)))+
+  stat_summary(fun.data='mean_cl_normal', geom='errorbar',position=position_dodge(width=0.4),width=0.4)+
+  stat_summary(fun='mean',geom='point',position=position_dodge(width=0.4))+
+  stat_summary(fun='mean', geom='line',position=position_dodge(width=0.4))
+
+train %>%
+  dplyr::select(contains(c("tillage,new")))
+
+```
+
+
+
+```{r}
+
+train_raw %>%
+  ggplot(aes(stubble_use, yield,color=threshing_method,group=threshing_method)) +
+  stat_summary(fun='mean', geom='point',position = position_dodge(width=0.5))+
+  stat_summary(fun.data = 'mean_cl_normal', geom='errorbar',position = position_dodge(width=0.5),width=0.2)+
+  stat_summary(fun='mean', geom='line',position = position_dodge(width=0.5))+
+  scale_color_manual(values=c("hand"="#3182bd","machine"='#31a354'))+
+  theme(legend.position = 'bottom',legend.title = element_blank())
+
+```
+
+## Exploration
+
+```{r}
+
+set.seed(1)
+results <- seq(0,5) %>%
+  map_dfr(function(q){
+    q <- 0
+    vip_split <- initial_split(train, prop = 0.8)
+
+    train_data <- training(vip_split)
+    test_data <- testing(vip_split)
+    
+    upper <- quantile(train_data$yield_per_acre,(1-(q/100)))
+    
+    train_data <- train_data %>%
+                      filter(yield_per_acre<upper)
+    
+    x <- orderNorm(train_data$yield)
+    
+    train_data$yield <- x$x.t
+    
+
+    
+    lm_model <- lm(yield ~ .,
+                   base_recipe %>% prep %>% bake(new_data = train_data) %>%
+                     dplyr::select(-id,-original_yield_per_acre)
+                   )
+    rf_model <- randomForest(yield ~ .,
+                             base_recipe %>% prep %>% bake(new_data = train_data) %>%
+                     dplyr::select(-id,-original_yield_per_acre)
+                             )
+    
+    lm_model <- stepAIC(lm_model, direction='both')
+    
+    test_data$yield_predicted <- predict(x,
+                                                 predict(lm_model, 
+                                                  base_recipe %>% prep %>% bake(new_data = test_data)
+                                                  ),
+                                                 inverse=TRUE)
+    
+    test_data$yield_predicted_rf <-  predict(x,
+                                                    predict(rf_model,
+                                                     base_recipe %>% prep %>% bake(new_data = test_data)
+                                                     ),
+                                                    inverse=TRUE)
+
+    
+    r_mse=RMSE(test_data$yield_predicted, test_data$yield)
+    r_mse2=RMSE(test_data$yield_predicted_rf, test_data$yield)
+    
+    data.frame(quantile=q,
+               train_amount=glue("{100-q}%"), 
+               nrow(train_data),
+               threshold=upper,
+               lm=r_mse,
+               rf=r_mse2
+               )
+    
+  })
+
+
+
+
+results %>%
+  pivot_longer(cols = c("lm","rf"),names_to = "model") %>%
+  ggplot(aes(quantile,value,label=glue("{round(value)}"),fill=model))+
+  geom_bar(stat='identity',position = position_dodge(width = 0.6),width=0.5)+
+  scale_fill_manual(values=c("lm"="#3182bd","rf"='#31a354'))+
+  geom_text(position = position_dodge(width = 0.6))
+
+
+
+
+
+
+
+```
+
+
+
+## Robust methods
+
+```{r}
+
+
+train_data$yield_predicted <-predict(lm_model,base_recipe %>% prep %>% bake(new_data= NULL))
+train_data$yield_predicted_rlm <-predict(x,predict(rlm_model,base_recipe %>% prep %>% bake(new_data= NULL)),inverse = T) %>% exp
+
+
+RMSE(train_data$yield, train_data$yield_predicted_rlm)
+
+plot(train_data$yield_predicted, train_data$yield_predicted-train_data$yield) %>%
+abline(0, 0, col = "red")
+
+p <- train_data %>%
+  ggplot(aes(yield_predicted, y=yield))+
+  geom_point(alpha=0.5)+
+  labs(y="Residuals")+
+  geom_abline(slope = 1,intercept = 0,color='red')
+p2 <- train_data %>%
+  ggplot(aes(yield_predicted_rlm, y=yield))+
+  geom_point(alpha=0.5)+
+  labs(y="Residuals",title='rlm')+
+  geom_abline(slope = 1,intercept = 0,color='red')
+  
+(p|p2)
+
+
+model <- isolation.forest(df %>% dplyr::select(starts_with("original"),-outlier,-yield))
+
+
+df$outlier  <- predict(model, df)
+
+df %>%
+  dplyr::select(yield,original_acre, outlier) %>%
+  arrange(desc(yield/original_acre))
+
+
+```
+
+## Models
+
+```{r}
+
+xg_model <- boost_tree(
+  trees = tune(),
+  min_n = tune(),
+  tree_depth = tune()
+) %>%
+  set_mode("regression") %>%
+  set_engine("xgboost", importance = TRUE)
+
+rf_model <- rand_forest(
+  trees = tune(),
+  min_n = tune(),
+  mtry  = tune()
+) %>%
+  set_mode("regression") %>%
+  set_engine("ranger", importance = "impurity")
+
+
+lm_model <- linear_reg(penalty = tune(),mixture = tune()) %>%
+  set_mode("regression") %>%
+  set_engine("glmnet")
+
+```
+
+## Workflow - yield_per_acre
+
+```{r}
+set.seed(2)
+wf_set <- workflow_set(
+  preproc = list("base_recipe" = base_recipe),
+  models = list(lm_model,rf_model, xg_model),
+  cross = T
+)
+
+cls_metrics_reg <- metric_set(yardstick::rmse, yardstick::rsq,yardstick::mae)
+
+tuned_wf_set <- wf_set %>%
+  workflow_map(
+    fn = "tune_grid",
+    resamples = folds,
+    verbose = T,
+    metrics = cls_metrics_reg,
+    grid = 10
+  )
+
+tuned_wf_set %>% autoplot()
+
+
+tuned_wf_set %>%
+  rank_results(rank_metric = "rmse") %>%
+  filter(.metric == "rmse")
+
+
+autoplot(tuned_wf_set, id = "base_recipe_rand_forest", metric = "rmse")
+
+best_wf <- tuned_wf_set %>%
+  extract_workflow_set_result("base_recipe_rand_forest") %>%
+  select_best(metric = "rmse")
+
+
+wf_final <- tuned_wf_set %>%
+  extract_workflow("base_recipe_rand_forest") %>%
+  finalize_workflow(best_wf) %>%
+  fit(train_data)
+```
+
+
+
+## Evaluation 
+
+```{r}
+set.seed(1)
+vip::vi(wf_final$fit$fit) %>% ggplot(aes(reorder(Variable, Importance), Importance)) +
+  geom_col() +
+  coord_flip()
+
+
+lm_model <- lm(yield_per_acre ~ .,
+   base_recipe %>% prep %>% bake(new_data = train_data) %>%dplyr::select(-id))
+lm_model <- stepAIC(lm_model, direction='backward')
+lm_model %>% summary()
+
+lm_model$residuals %>% plot()
+
+preds <- predict(lm_model, 
+                 base_recipe %>% prep %>% bake(new_data = test_data) %>%dplyr::select(-id))
+
+
+
+test_data$yield_per_acre_predicted <- preds
+
+
+test_data <- test_data %>%
+  mutate(yield_predicted = acre*yield_per_acre_predicted
+         )
+
+RMSE(test_data$yield, test_data$yield_predicted)
+
+
+test_data %>% dplyr::select(yield, yield_per_acre,yield_predicted,yield_per_acre_predicted,acre) %>% arrange(desc(yield_per_acre))
+
+
+qqplot(test_data$yield, test_data$yield_predicted, plot.it = T)
+abline(0, 1, col = "red")
+
+plot(test_data$yield_predicted, test_data$yield_predicted - test_data$yield)
+abline(1, 0, col = "green")
+
+```
+
+
+```{r}
+
+
+
+```
+
+## Submission
+
+```{r}
+set.seed(2)
+submission_test <- read.csv("../data/Test.csv")
+submission_test$ref_date <- as.Date("2022-06-01")
+submission_test[submission_test == ""] <- "NotDefined"
+submission_test <- makeWide_v2(df = submission_test)
+
+preds_submission <- predict(wf_final, 
+                            submission_test)
+
+dummy_submit <- base_recipe %>% prep %>% bake(new_data = submission_test)
+
+
+submission_test$yield_per_acre_predicted <- predict(x,
+                                                    preds_submission$.pred,
+                                                    inverse = TRUE
+                                                    )
+
+
+
+
+submission_test <- submission_test %>%
+  mutate(yield_predicted=yield_per_acre_predicted*acre)
+
+final_submission <- submission_test %>%
+  dplyr::select(
+    ID = id,
+    Yield = yield_predicted
+  )
+
+write.csv(final_submission, "../data/final_submission.csv", row.names = F)
+```

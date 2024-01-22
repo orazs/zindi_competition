@@ -1,0 +1,66 @@
+"0","source(""utils.R"")"
+"2","Registered S3 methods overwritten by 'htmltools':
+  method               from         
+  print.html           tools:rstudio
+  print.shiny.tag      tools:rstudio
+  print.shiny.tag.list tools:rstudio
+"
+"2","Registered S3 method overwritten by 'htmlwidgets':
+  method           from         
+  print.htmlwidget tools:rstudio
+"
+"0","library(patchwork)"
+"0","set.seed(2)"
+"0","original_df <- read.csv(""data/Train.csv"")"
+"0","train_raw <- original_df"
+"0","desc <- read.csv(""data/VariableDescription.csv"")"
+"0",""
+"0","composite_names <- c("
+"0","  ""nursery_factors"","
+"0","  ""tillage_method"","
+"0","  ""transplanting_org_fertilizers"","
+"0","  ""tillage_fertilizers_second_dose"","
+"0","  ""transplanting_factors"","
+"0","  ""tillage_basal_fertilizers"""
+"0",")"
+"0",""
+"0","train_raw[train_raw == """"] <- ""NotDefined"""
+"0","train_raw$ref_date <- as.Date(""2022-06-01"")"
+"0",""
+"0",""
+"0","names(train_raw )<- c(""id"",""district"",""block"",""cut_land"",""crop_cut_land"",""tillage_method"",""tillage_date"",""tillage_depth"","
+"0","               ""transplanting_method"",""nursery_date"",""transplanting_date"",""transplanting_seedlings_per_pit"",""nursery_factors"",""transplanting_factors"","
+"0","               ""transplanting_irrigation_hours"",""transplanting_irrigation_source"",""transplanting_irrigation_ps"",""transplanting_irrigation_cost"","
+"0","               ""total_standing_water"",""transplanting_org_fertilizers"",""transplanting_ganaura"",""transplanting_crop_org_fym"",""tillage_previous_fert_method"",""total_fertilizer_applied_times"",""tillage_basal_fertilizers"","
+"0","               ""tillage_basal_dap"",""tillage_basal_urea"",""tillage_mineral_fert_method"",""tillage_fertilizers_second_dose"",""tillage_urea_second_dose"",""tillage_tat_urea_first"",""tillage_urea_third_dose"",""tillage_tat_urea_second"","
+"0","               ""tillage_mineral_fertilizers_method_second_dose"",""harvest_method"",""harvest_date"",""harvest_hand_rent"",""threshing_date"",""threshing_method"",""harvest_residue_length"",""harvest_residue_perc"",""harvest_stubble_use"",""acre"",""yield"",""ref_date"")"
+"0",""
+"0","train_raw <- makeWide_v2(df=train_raw)"
+"2","Warning: Using an external vector in selections was deprecated in tidyselect 1.1.0.
+Please use `all_of()` or `any_of()` instead.
+# Was:
+data %>% select(x)
+
+# Now:
+data %>% select(all_of(x))
+
+See <https://tidyselect.r-lib.org/reference/faq-external-vector.html>."
+"0","train <- train_raw %>%"
+"0","  dplyr::select(id,district,block,ref_date,"
+"0","                starts_with(""tillage""),"
+"0","                starts_with(""nursery""),"
+"0","                starts_with(""transplanting""),"
+"0","                starts_with(""harvest""),"
+"0","                starts_with(""threshing""),"
+"0","                starts_with(""total""),"
+"0","                acre,yield)"
+"0","train <- train %>%"
+"0","  mutate(yield_per_acre = yield/acre)"
+"0",""
+"0","rm(train_raw)"
+"0",""
+"0",""
+"0",""
+"0",""
+"0",""
+"0",""
